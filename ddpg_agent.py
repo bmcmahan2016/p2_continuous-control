@@ -9,12 +9,12 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 128        # minibatch size
+BUFFER_SIZE = int(1e7)  # replay buffer size
+BATCH_SIZE = 528        # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 1e-4         # learning rate of the actor 
-LR_CRITIC = 1e-3        # learning rate of the critic
+LR_ACTOR = 5e-5         # learning rate of the actor 
+LR_CRITIC = 5e-4        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -49,7 +49,7 @@ class Agent():
         self.noise = OUNoise(action_size, random_seed)
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, random_seed)
+        self.memory = ReplayBuffer(state_size, action_size, BUFFER_SIZE, BATCH_SIZE, random_seed)
     
     def step(self, state, action, reward, next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
@@ -154,7 +154,7 @@ class OUNoise:
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
 
-    def __init__(self, action_size, buffer_size, batch_size, seed):
+    def __init__(self, state_size, action_size, buffer_size, batch_size, seed):
         """Initialize a ReplayBuffer object.
         Params
         ======
@@ -162,28 +162,55 @@ class ReplayBuffer:
             batch_size (int): size of each training batch
         """
         self.action_size = action_size
-        self.memory = deque(maxlen=buffer_size)  # internal memory (deque)
+        self.state_size=state_size
+        self.buffer_size=buffer_size    # how many samples to keep in buffer
+        self.buffer_ix=0                # points to the end of the buffer
+        self.buffer_len=0              # number of elements in buffer
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
+
+        # initialize the replay buffer
+        self.create_buffers()
+
+    def create_buffers(self):
+        '''creates replay buffer on GPU'''
+        self.states = torch.zeros((self.buffer_size, self.state_size)).to(device)
+        self.actions = torch.zeros((self.buffer_size, self.action_size)).to(device)
+        self.rewards = torch.zeros((self.buffer_size,1)).to(device)
+        self.next_states = torch.zeros((self.buffer_size, self.state_size)).to(device)
+        self.done = torch.zeros((self.buffer_size,1)).to(device)
+
     
     def add(self, state, action, reward, next_state, done):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
-        self.memory.append(e)
+        # pointer to end of buffer
+        ix = self.buffer_ix
+        # add experiences to buffers
+        self.states[ix] = torch.from_numpy(state)
+        self.actions[ix] = torch.from_numpy(action)
+        self.rewards[ix] = reward
+        self.next_states[ix] = torch.from_numpy(next_state)
+        self.done[ix] = done
+        # update the number of elements in the buffer
+        self.buffer_len += 1
+        self.buffer_len = np.minimum(self.buffer_len, self.buffer_size)
+        # increment buffer pointer
+        self.buffer_ix += 1
+        self.buffer_ix = self.buffer_ix %self.buffer_size
+        
     
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
-        experiences = random.sample(self.memory, k=self.batch_size)
+        batch_ixs = np.random.choice(self.buffer_len, size=self.batch_size)
 
-        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
+        states = self.states[batch_ixs]#torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
+        actions = self.actions[batch_ixs]#torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(device)
+        rewards = self.rewards[batch_ixs]#torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
+        next_states = self.next_states[batch_ixs]#torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
+        dones = self.done[batch_ixs]#torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
 
         return (states, actions, rewards, next_states, dones)
 
     def __len__(self):
         """Return the current size of internal memory."""
-        return len(self.memory)
+        return self.buffer_len
