@@ -9,12 +9,12 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-BUFFER_SIZE = int(1e7)  # replay buffer size
-BATCH_SIZE = 528        # minibatch size
+BUFFER_SIZE = int(1e6)  # replay buffer size
+BATCH_SIZE = 64        # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 5e-5         # learning rate of the actor 
-LR_CRITIC = 5e-4        # learning rate of the critic
+LR_ACTOR = 1e-3         # learning rate of the actor 
+LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -64,7 +64,7 @@ class Agent():
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
         state = torch.from_numpy(state).float().to(device)
-        self.actor_local.eval()
+        self.actor_local.eval()  
         with torch.no_grad():
             action = self.actor_local(state).cpu().data.numpy()
         self.actor_local.train()
@@ -101,6 +101,7 @@ class Agent():
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
         # ---------------------------- update actor ---------------------------- #
@@ -163,7 +164,8 @@ class ReplayBuffer:
         """
         self.action_size = action_size
         self.state_size=state_size
-        self.buffer_size=buffer_size    # how many samples to keep in buffer
+        # buffer size must be a multiple of the number of agents
+        self.buffer_size=int(buffer_size - buffer_size %20)    # how many samples to keep in buffer
         self.buffer_ix=0                # points to the end of the buffer
         self.buffer_len=0              # number of elements in buffer
         self.batch_size = batch_size
@@ -186,16 +188,16 @@ class ReplayBuffer:
         # pointer to end of buffer
         ix = self.buffer_ix
         # add experiences to buffers
-        self.states[ix] = torch.from_numpy(state)
-        self.actions[ix] = torch.from_numpy(action)
-        self.rewards[ix] = reward
-        self.next_states[ix] = torch.from_numpy(next_state)
-        self.done[ix] = done
+        self.states[ix:ix+20] = torch.from_numpy(state)
+        self.actions[ix:ix+20] = torch.from_numpy(action)
+        self.rewards[ix:ix+20] = torch.tensor(reward).view(20,1)
+        self.next_states[ix:ix+20] = torch.from_numpy(next_state)
+        self.done[ix:ix+20] = torch.tensor(done).view(20,1)
         # update the number of elements in the buffer
-        self.buffer_len += 1
+        self.buffer_len += 20
         self.buffer_len = np.minimum(self.buffer_len, self.buffer_size)
         # increment buffer pointer
-        self.buffer_ix += 1
+        self.buffer_ix += 20
         self.buffer_ix = self.buffer_ix %self.buffer_size
         
     
