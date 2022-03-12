@@ -2,6 +2,10 @@ import numpy as np
 import random
 import copy
 from collections import namedtuple, deque
+from os import mkdir
+import datetime
+from config import CONFIG
+import matplotlib.pyplot as plt
 
 from model import Actor, Critic
 
@@ -9,13 +13,15 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-BUFFER_SIZE = int(1e6)  # replay buffer size
-BATCH_SIZE = 64        # minibatch size
-GAMMA = 0.99            # discount factor
-TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 1e-3         # learning rate of the actor 
-LR_CRITIC = 1e-3        # learning rate of the critic
-WEIGHT_DECAY = 0        # L2 weight decay
+BUFFER_SIZE = CONFIG['BUFFER_SIZE']  # replay buffer size
+BATCH_SIZE = CONFIG['BATCH_SIZE']        # minibatch size
+GAMMA = CONFIG['GAMMA']            # discount factor
+TAU = CONFIG['TAU']              # for soft update of target parameters
+LR_ACTOR = CONFIG['LR_ACTOR']         # learning rate of the actor 
+LR_CRITIC = CONFIG['LR_CRITIC']        # learning rate of the critic
+WEIGHT_DECAY = CONFIG['WEIGHT_DECAY']        # L2 weight decay
+UPDATE_EVERY = CONFIG['UPDATE_EVERY']
+UPDATES_PER_STEP = CONFIG['UPDATES_PER_STEP']
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -34,15 +40,16 @@ class Agent():
         self.state_size = state_size
         self.action_size = action_size
         self.seed = random.seed(random_seed)
+        self.t_step = 0
 
         # Actor Network (w/ Target Network)
-        self.actor_local = Actor(state_size, action_size, random_seed).to(device)
-        self.actor_target = Actor(state_size, action_size, random_seed).to(device)
+        self.actor_local = Actor(state_size, action_size, random_seed, fc1_units=CONFIG['fc1_units'], fc2_units=CONFIG['fc2_units']).to(device)
+        self.actor_target = Actor(state_size, action_size, random_seed, fc1_units=CONFIG['fc1_units'], fc2_units=CONFIG['fc2_units']).to(device)
         self.actor_optimizer = optim.Adam(self.actor_local.parameters(), lr=LR_ACTOR)
 
         # Critic Network (w/ Target Network)
-        self.critic_local = Critic(state_size, action_size, random_seed).to(device)
-        self.critic_target = Critic(state_size, action_size, random_seed).to(device)
+        self.critic_local = Critic(state_size, action_size, random_seed, fcs1_units=CONFIG['fc1_units'], fc2_units=CONFIG['fc2_units']).to(device)
+        self.critic_target = Critic(state_size, action_size, random_seed, fcs1_units=CONFIG['fc1_units'], fc2_units=CONFIG['fc2_units']).to(device)
         self.critic_optimizer = optim.Adam(self.critic_local.parameters(), lr=LR_CRITIC, weight_decay=WEIGHT_DECAY)
 
         # Noise process
@@ -50,16 +57,65 @@ class Agent():
 
         # Replay memory
         self.memory = ReplayBuffer(state_size, action_size, BUFFER_SIZE, BATCH_SIZE, random_seed)
+
+        # initializes a logginig directory and saves config file to it
+        self.log_dir = 'DDPG_training_logs/' + CONFIG['desc'] + '_' + datetime.datetime.now().strftime("%Y-%m-%d__%H-%M-%S") + '/'
+        mkdir(self.log_dir)
+        with open(self.log_dir + "config.txt", 'w') as config_file:
+            config_file.write("TRAINING HYPER-PARAMETERS\n\n")
+            for hyper_param, value in CONFIG.items():
+                config_file.write('%s : %s\n' % (hyper_param, value))
+        config_file.close()
+
+    def load_weights(self,  fpath, model_num):
+        '''loads weights from existing model'''
+        self.actor_local.load_state_dict(torch.load(fpath + '/ddpg_actor_local_' + str(model_num)))
+        self.actor_target.load_state_dict(torch.load(fpath + '/ddpg_actor_target_' + str(model_num)))
+        self.critic_local.load_state_dict(torch.load(fpath + '/ddpg_critic_local_' + str(model_num)))
+        self.critic_target.load_state_dict(torch.load(fpath + '/ddpg_critic_target_' + str(model_num)))
+
+    def save_actor_critic(self, episode_num=0):
+        '''saves the actor and critic models'''
+        torch.save(self.actor_local.state_dict(), self.log_dir + 'ddpg_actor_local_' + str(episode_num))
+        torch.save(self.actor_target.state_dict(), self.log_dir + 'ddpg_actor_target_' + str(episode_num))
+        torch.save(self.critic_local.state_dict(), self.log_dir + 'ddpg_critic_local_' + str(episode_num))
+        torch.save(self.critic_target.state_dict(), self.log_dir + 'ddpg_critic_target_' + str(episode_num))
+    
+    def save_training_run(self, scores, episode_num):
+        '''
+        plots the learning curve for this training run and logs it to file
+        '''
+        # generate learning curve
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        plt.plot(np.arange(1, len(scores)+1), np.mean(scores, axis=-1))
+        plt.ylabel('Score')
+        plt.xlabel('Training Episode')
+        plt.savefig(self.log_dir + 'learning_curve')
+
+        # save the final model
+        self.save_actor_critic(episode_num=episode_num)
+
+        # save the scores array
+        with open(self.log_dir + 'scores.npy', 'wb') as f:
+            np.save(f, np.array(scores))
+        f.close()
+
+        plt.show()
+
+
     
     def step(self, state, action, reward, next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
         # Save experience / reward
         self.memory.add(state, action, reward, next_state, done)
+        self.t_step += 1
 
         # Learn, if enough samples are available in memory
-        if len(self.memory) > BATCH_SIZE:
-            experiences = self.memory.sample()
-            self.learn(experiences, GAMMA)
+        if len(self.memory) > BATCH_SIZE and self.t_step %UPDATE_EVERY == 0:
+            for _ in range(UPDATES_PER_STEP) :
+                experiences = self.memory.sample()
+                self.learn(experiences, GAMMA)
 
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -101,7 +157,7 @@ class Agent():
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        #torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
+        torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
         # ---------------------------- update actor ---------------------------- #
@@ -111,6 +167,7 @@ class Agent():
         # Minimize the loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor_local.parameters(), 1)
         self.actor_optimizer.step()
 
         # ----------------------- update target networks ----------------------- #
