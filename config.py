@@ -10,15 +10,15 @@ be used as the directory name under which this new run will be saved.
 
 CONFIG = {
     'BUFFER_SIZE' : int(1e6),
-    'BATCH_SIZE' : 512,
+    'BATCH_SIZE' : 1024,
     'GAMMA' : 0.99,
     'TAU' : 1e-3,
-    'LR_ACTOR' : 1e-5,
-    'LR_CRITIC' : 1e-4,
+    'LR_ACTOR' : 1e-4,
+    'LR_CRITIC' : 1e-3,
     'WEIGHT_DECAY' : 0,
-    'UPDATE_EVERY' : 40,
-    'UPDATES_PER_STEP' : 10,
-    'fc1_units' : 300,
-    'fc2_units' : 400,
-    'desc' : 'less_updates'
+    'UPDATE_EVERY' : 50,
+    'UPDATES_PER_STEP' : 40,
+    'fc1_units' : 256,
+    'fc2_units' : 128,
+    'desc' : 'fewer_units'
 }
