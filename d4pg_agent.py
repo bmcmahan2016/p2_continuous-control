@@ -107,8 +107,27 @@ class Agent():
     
     def step(self, state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
+        # compute the TD-error for these experience tuples
+        self.actor_target.eval()
+        self.actor_local.eval()
+        self.critic_local.eval()
+        with torch.no_grad():
+            # each agent takes a next action, so there should be 20 actions in R4
+            actions_next = self.actor_target(torch.from_numpy(next_next_next_state).float().cuda()) # (20, 4)
+            # the predicted Q-value using the last state and next action
+            # should be 20 values since there are 20 agents
+            Q_target_next_next = self.critic_target(torch.from_numpy(next_next_next_state).float().cuda(), actions_next).cpu().numpy()
+            # Compute Q targets for current states (y_i) using the bellman operator
+            # this should still have 20 values since there are 20 agents
+            Q_targets = np.array(reward).reshape(-1,1) + GAMMA * ( np.array(next_reward).reshape(-1,1) + GAMMA * (np.array(next_next_reward).reshape(-1,1) + GAMMA * Q_target_next_next*(1-np.array(done).reshape(-1,1))))
+            Q_expected = self.critic_local(torch.from_numpy(state).float().cuda(), torch.from_numpy(action).float().cuda()).cpu().numpy()
+            td_errors = np.abs(Q_targets - Q_expected)
+        self.actor_target.train()
+        self.actor_local.train()
+        self.critic_local.train()
+
         # Save experience / reward
-        self.memory.add(state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done)
+        self.memory.add(state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done, td_errors)
         self.t_step += 1
 
         # Learn, if enough samples are available in memory
@@ -144,22 +163,39 @@ class Agent():
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
             gamma (float): discount factor
         """
-        states, actions, rewards, next_states, next_actions, next_rewards, next_next_states, next_next_actions, next_next_rewards, next_next_next_states, dones = experiences
+        states, actions, rewards, next_states, next_actions, next_rewards, next_next_states, next_next_actions, next_next_rewards, next_next_next_states, dones, probabilities = experiences
 
         # ---------------------------- update critic ---------------------------- #
         # Get predicted next-state actions and Q values from target models
+
+        # must normalize updates with the following
+        # 1/replay_buffer_size * 1/sampling_proabiblility
+        importance_sampling = (1./BUFFER_SIZE) * (1./probabilities)
+        importance_sampling = torch.tensor(importance_sampling).to(device)
+        importance_sampling = importance_sampling / torch.max(importance_sampling)
+        importance_sampling = importance_sampling.view(-1,1)
+
+        #print("shape of importance_sampling:", importance_sampling.shape)
+
         actions_next = self.actor_target(next_next_next_states)
         Q_target_next_next = self.critic_target(next_next_next_states, actions_next)
         # Compute Q targets for current states (y_i)
         Q_targets = rewards + gamma * ( next_rewards + gamma * (next_next_rewards + gamma * Q_target_next_next*(1-dones)))
+        Q_targets = importance_sampling * Q_targets
         # Compute critic loss
-        Q_expected = self.critic_local(states, actions)
+        Q_expected = importance_sampling * self.critic_local(states, actions)
+        #print("shape of Q_expected:", Q_expected.shape)  # should be (1024,)
+        #print("shape of Q_targets:", Q_targets.shape)    # should be (1024,)
         critic_loss = F.mse_loss(Q_expected, Q_targets)
+        #print("shape of critic loss:", critic_loss.shape)
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
+
+        
+
 
         # ---------------------------- update actor ---------------------------- #
         # Compute actor loss
@@ -170,6 +206,12 @@ class Agent():
         actor_loss.backward()
         #torch.nn.utils.clip_grad_norm_(self.actor_local.parameters(), 1)
         self.actor_optimizer.step()
+
+        # --------------------- update replay priorities  --------------------- #
+        #print("Q_targets", Q_targets.shape)
+        #print("Q_expected", Q_expected.shape)
+        td_errors = torch.abs(Q_targets.detach() - Q_expected.detach())
+        self.memory.update_priorities(td_errors)
 
         # ----------------------- update target networks ----------------------- #
         self.soft_update(self.critic_local, self.critic_target, TAU)
@@ -228,6 +270,7 @@ class ReplayBuffer:
         self.buffer_len=0              # number of elements in buffer
         self.batch_size = batch_size
         self.seed = random.seed(seed)
+        self.batch_ixs = None           # holds the indices of the last batch
 
         # initialize the replay buffer
         self.create_buffers()
@@ -249,9 +292,10 @@ class ReplayBuffer:
         self.next_next_next_states = torch.zeros((self.buffer_size, self.state_size)).to(device)
         # final dones after 3 state look ahead
         self.done = torch.zeros((self.buffer_size,1)).to(device)
+        self.priorities = torch.zeros((self.buffer_size,1)).to(device)  # replay priority
 
     
-    def add(self, state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done):
+    def add(self, state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done, priorities):
         """Add a new experience to memory."""
         # pointer to end of buffer
         ix = self.buffer_ix
@@ -267,31 +311,42 @@ class ReplayBuffer:
         self.next_next_states[ix:ix+20] = torch.from_numpy(next_next_state)
         self.next_next_next_states[ix:ix+20] = torch.from_numpy(next_next_next_state)
         self.done[ix:ix+20] = torch.tensor(done).view(20,1)
+        self.priorities[ix:ix+20] =  torch.from_numpy(priorities)
         # update the number of elements in the buffer
         self.buffer_len += 20
         self.buffer_len = np.minimum(self.buffer_len, self.buffer_size)
         # increment buffer pointer
         self.buffer_ix += 20
         self.buffer_ix = self.buffer_ix %self.buffer_size
+
+    def update_priorities(self, priorities):
+        '''
+        updates the priorites of replayed tuples
+        '''
+        self.priorities[self.batch_ixs] = priorities
         
     
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
-        batch_ixs = np.random.choice(self.buffer_len, size=self.batch_size)
+        # convert priorities to probabilities
+        probabilities = self.priorities[:self.buffer_len, 0].cpu().numpy()
+        probabilities += 0.05*np.random.rand(self.buffer_len)
+        probabilities = probabilities**0.5 / np.sum(probabilities**0.5)
+        self.batch_ixs = np.random.choice(self.buffer_len, size=self.batch_size, p=probabilities)
 
-        states = self.states[batch_ixs]
-        actions = self.actions[batch_ixs]
-        next_actions = self.next_actions[batch_ixs]
-        next_next_actions = self.next_next_actions[batch_ixs]
-        rewards = self.rewards[batch_ixs]
-        next_rewards = self.next_rewards[batch_ixs]
-        next_next_rewards = self.next_next_rewards[batch_ixs]
-        next_states = self.next_states[batch_ixs]
-        next_next_states = self.next_states[batch_ixs]
-        next_next_next_states = self.next_states[batch_ixs]
-        dones = self.done[batch_ixs]
+        states = self.states[self.batch_ixs]
+        actions = self.actions[self.batch_ixs]
+        next_actions = self.next_actions[self.batch_ixs]
+        next_next_actions = self.next_next_actions[self.batch_ixs]
+        rewards = self.rewards[self.batch_ixs]
+        next_rewards = self.next_rewards[self.batch_ixs]
+        next_next_rewards = self.next_next_rewards[self.batch_ixs]
+        next_states = self.next_states[self.batch_ixs]
+        next_next_states = self.next_states[self.batch_ixs]
+        next_next_next_states = self.next_states[self.batch_ixs]
+        dones = self.done[self.batch_ixs]
 
-        return (states, actions, rewards, next_states, next_actions, next_rewards, next_next_states, next_next_actions, next_next_rewards, next_next_next_states, dones)
+        return (states, actions, rewards, next_states, next_actions, next_rewards, next_next_states, next_next_actions, next_next_rewards, next_next_next_states, dones, probabilities[self.batch_ixs])
 
     def __len__(self):
         """Return the current size of internal memory."""
