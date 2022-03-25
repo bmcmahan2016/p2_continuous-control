@@ -11,7 +11,7 @@
 This project was completed as part of the Udacity Deep Reinforcement Learning Nanodegree program. The goal of this project is to solve the [Reacher](https://github.com/Unity-Technologies/ml-agents/blob/master/docs/Learning-Environment-Examples.md#reacher) environment (described below) which was created with Unity and provided by Udacity. 
 
 ## Description of Environment
-Below is a sample animation of 10 agents that have learned how to play this environment. Each agent controls a double jointed arm and the goal is to keep the end point of the arm in the rotating green region (i.e. the target location). A reward of +0.1 is provided to the agent for every timestep that the arm's endpoint falls within the green highlighted region. 
+Below is a sample animation (provided by Udacity) of 10 agents that have learned how to play this environment. Each agent controls a double jointed arm and the goal is to keep the end point of the arm in the rotating green region (i.e. the target location). A reward of +0.1 is provided to the agent for every timestep that the arm's endpoint falls within the green highlighted region. 
 
 ![Trained Agent (image provided by Udacity)][image1]
 
