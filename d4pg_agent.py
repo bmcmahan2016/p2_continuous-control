@@ -73,10 +73,10 @@ class Agent():
 
     def load_weights(self,  fpath, model_num):
         '''loads weights from existing model'''
-        self.actor_local.load_state_dict(torch.load(fpath + '/ddpg_actor_local_' + str(model_num)))
-        self.actor_target.load_state_dict(torch.load(fpath + '/ddpg_actor_target_' + str(model_num)))
-        self.critic_local.load_state_dict(torch.load(fpath + '/ddpg_critic_local_' + str(model_num)))
-        self.critic_target.load_state_dict(torch.load(fpath + '/ddpg_critic_target_' + str(model_num)))
+        self.actor_local.load_state_dict(torch.load(fpath + 'ddpg_actor_local_' + str(model_num)))
+        self.actor_target.load_state_dict(torch.load(fpath + 'ddpg_actor_target_' + str(model_num)))
+        self.critic_local.load_state_dict(torch.load(fpath + 'ddpg_critic_local_' + str(model_num)))
+        self.critic_target.load_state_dict(torch.load(fpath + 'ddpg_critic_target_' + str(model_num)))
 
     def save_actor_critic(self, episode_num=0):
         '''saves the actor and critic models'''
