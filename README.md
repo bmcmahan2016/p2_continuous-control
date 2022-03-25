@@ -31,5 +31,5 @@ First download the Unity environment using the instructions provided by Udacity:
 2. Place the downloaded file in this repository and unzip or decompress it. 
 3. Set the file_name='' argument in the first line of cell [2] in D4PG.ipynb to point towards the Reacher.exe file you downloaded in the above two steps. Depending on how you extracted the downloaded files it may already point in the correct location. 
 4. Run cells 1,2,3, and 4 in the D4PG notebook to start training an agent from scratch. The final cell will visualize the performance of your trained agent(s).
-5. You can also load a pretrained agent by running cell 5
+5. You can also load a pretrained agent by running cells 1, 2, and 5
 6. You can visualize the performance of your trained agent(s) by running cell 6.
