@@ -110,7 +110,7 @@ class Agent():
     def step(self, state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
         # compute the TD-error for these experience tuples
-        '''self.actor_target.eval()
+        self.actor_target.eval()
         self.actor_local.eval()
         self.critic_local.eval()
         with torch.no_grad():
@@ -119,14 +119,16 @@ class Agent():
             # the predicted Q-value using the last state and next action
             # should be 20 values since there are 20 agents
             Q_target_next_next = self.critic_target(torch.from_numpy(next_next_next_state).float().cuda(), actions_next).cpu().numpy()
+            mean_targ = Q_target_next_next[:,0]
             # Compute Q targets for current states (y_i) using the bellman operator
             # this should still have 20 values since there are 20 agents
-            Q_targets = np.array(reward).reshape(-1,1) + GAMMA * ( np.array(next_reward).reshape(-1,1) + GAMMA * (np.array(next_next_reward).reshape(-1,1) + GAMMA * Q_target_next_next*(1-np.array(done).reshape(-1,1))))
+            mean_targ = np.array(reward).reshape(-1,1) + GAMMA * ( np.array(next_reward).reshape(-1,1) + GAMMA * (np.array(next_next_reward).reshape(-1,1) + GAMMA * mean_targ*(1-np.array(done).reshape(-1,1))))
             Q_expected = self.critic_local(torch.from_numpy(state).float().cuda(), torch.from_numpy(action).float().cuda()).cpu().numpy()
-            td_errors = np.abs(Q_targets - Q_expected)
+            mean = Q_expected[:,0]
+            td_errors = np.abs(mean_targ - mean)
         self.actor_target.train()
         self.actor_local.train()
-        self.critic_local.train()'''
+        self.critic_local.train()
         td_errors = np.ones((20, 1))
         # Save experience / reward
         self.memory.add(state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done, td_errors)
@@ -184,7 +186,7 @@ class Agent():
         Q_target_next_next = self.critic_target(next_next_next_states, actions_next)  # (batch_size, 2)
         mean_targ = Q_target_next_next[:, 0].view(-1,1)           # (batch_size, 1)
         var_targ = Q_target_next_next[:, 1].view(-1,1)            # (batch_size, 1)
-        var_targ = torch.maximum(0.1*torch.ones_like(var_targ), var_targ)
+        var_targ = torch.maximum(0.25*torch.ones_like(var_targ), var_targ)
         #print("mean_targ shape:", mean_targ.shape)  # should still be (batch_size, 1)
         #print("var_targ shape:", var_targ.shape)    # should still be (batch_size, 1)
         
@@ -198,7 +200,7 @@ class Agent():
         # now compute the critic distribution on the current state
         Q_expected = self.critic_local(states, actions)
         mean = Q_expected[:, 0].view(-1,1)
-        var = torch.maximum(0.1*torch.ones_like(Q_expected[:,1].view(-1,1)), Q_expected[:, 1].view(-1,1))
+        var = torch.maximum(0.25*torch.ones_like(Q_expected[:,1].view(-1,1)), Q_expected[:, 1].view(-1,1))
 
         #dud = Q_targets[2]   # sanity check this line should throw an error
         #print("mean shape:", mean.shape)  # should be (batch_size, 1)
@@ -223,7 +225,7 @@ class Agent():
         
         
         
-        critic_loss = -log_p                         # (batch_size, 1)  -- add back importance sampling
+        critic_loss = -importance_sampling*log_p                         # (batch_size, 1)  -- add back importance sampling
         #print("shape of pre-scalar critic loss:", critic_loss.shape)
         critic_loss = torch.sum(critic_loss) / BATCH_SIZE               # scalar
         #print("critic loss:", critic_loss)
@@ -258,8 +260,8 @@ class Agent():
         # --------------------- update replay priorities  --------------------- #
         #print("Q_targets", Q_targets.shape)
         #print("Q_expected", Q_expected.shape)
-        #td_errors = torch.abs(mean.detach() - mean_targ.detach())  # (batch_size, 1)
-        #self.memory.update_priorities(td_errors)
+        td_errors = torch.abs(mean.detach() - mean_targ.detach())  # (batch_size, 1)
+        self.memory.update_priorities(td_errors)
 
         # ----------------------- update target networks ----------------------- #
         self.soft_update(self.critic_local, self.critic_target, TAU)
@@ -357,7 +359,8 @@ class ReplayBuffer:
         # convert priorities to probabilities
         probabilities = self.priorities[:self.buffer_len, 0].cpu().numpy()
         probabilities += 0.05*np.random.rand(self.buffer_len)
-        probabilities = probabilities**0.0 / np.sum(probabilities**0.0)
+        # raising to 0.5 power trades off between prioritized and uniform sampling
+        probabilities = probabilities**0.5 / np.sum(probabilities**0.5)
         self.batch_ixs = np.random.choice(self.buffer_len, size=self.batch_size, p=probabilities)
 
         states = self.states[self.batch_ixs]
