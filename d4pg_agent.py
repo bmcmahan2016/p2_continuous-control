@@ -52,8 +52,12 @@ class Agent():
         self.critic_target = Critic(state_size, action_size, random_seed, fcs1_units=CONFIG['fc1_units'], fc2_units=CONFIG['fc2_units']).to(device)
         self.critic_optimizer = optim.Adam(self.critic_local.parameters(), lr=LR_CRITIC, weight_decay=WEIGHT_DECAY)
 
-        # Noise process
-        self.noise = OUNoise(action_size, random_seed)
+        # initialize target and local networks with same weights
+        for target_param, local_param in zip(self.critic_target.parameters(), self.critic_local.parameters()):
+            target_param.data.copy_(local_param.data)
+
+        for target_param, local_param in zip(self.actor_target.parameters(), self.actor_local.parameters()):
+            target_param.data.copy_(local_param.data)
 
         # Replay memory
         self.memory = ReplayBuffer(state_size, action_size, BUFFER_SIZE, BATCH_SIZE, random_seed)
@@ -102,13 +106,11 @@ class Agent():
         f.close()
 
         plt.show()
-
-
     
     def step(self, state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done):
         """Save experience in replay memory, and use random sample from buffer to learn."""
         # compute the TD-error for these experience tuples
-        self.actor_target.eval()
+        '''self.actor_target.eval()
         self.actor_local.eval()
         self.critic_local.eval()
         with torch.no_grad():
@@ -124,8 +126,8 @@ class Agent():
             td_errors = np.abs(Q_targets - Q_expected)
         self.actor_target.train()
         self.actor_local.train()
-        self.critic_local.train()
-
+        self.critic_local.train()'''
+        td_errors = np.ones((20, 1))
         # Save experience / reward
         self.memory.add(state, action, reward, next_state, next_action, next_reward, next_next_state, next_next_action, next_next_reward, next_next_next_state, done, td_errors)
         self.t_step += 1
@@ -149,7 +151,7 @@ class Agent():
         return np.clip(action, -1, 1)
 
     def reset(self):
-        self.noise.reset()
+        pass  # was used to reset noise which I removed
 
     def learn(self, experiences, gamma):
         """Update policy and value parameters using given batch of experience tuples.
@@ -165,7 +167,8 @@ class Agent():
         """
         states, actions, rewards, next_states, next_actions, next_rewards, next_next_states, next_next_actions, next_next_rewards, next_next_next_states, dones, probabilities = experiences
 
-        # ---------------------------- update critic ---------------------------- #
+        
+       # ---------------------------- update critic ---------------------------- #
         # Get predicted next-state actions and Q values from target models
 
         # must normalize updates with the following
@@ -175,18 +178,65 @@ class Agent():
         importance_sampling = importance_sampling / torch.max(importance_sampling)
         importance_sampling = importance_sampling.view(-1,1)
 
-        #print("shape of importance_sampling:", importance_sampling.shape)
-
         actions_next = self.actor_target(next_next_next_states)
-        Q_target_next_next = self.critic_target(next_next_next_states, actions_next)
-        # Compute Q targets for current states (y_i)
-        Q_targets = rewards + gamma * ( next_rewards + gamma * (next_next_rewards + gamma * Q_target_next_next*(1-dones)))
-        Q_targets = importance_sampling * Q_targets
+
+        # construct the target distribution
+        Q_target_next_next = self.critic_target(next_next_next_states, actions_next)  # (batch_size, 2)
+        mean_targ = Q_target_next_next[:, 0].view(-1,1)           # (batch_size, 1)
+        var_targ = Q_target_next_next[:, 1].view(-1,1)            # (batch_size, 1)
+        var_targ = torch.maximum(0.1*torch.ones_like(var_targ), var_targ)
+        #print("mean_targ shape:", mean_targ.shape)  # should still be (batch_size, 1)
+        #print("var_targ shape:", var_targ.shape)    # should still be (batch_size, 1)
+        
+        # Compute mean of target distribution
+        mean_targ = rewards + gamma * ( next_rewards + gamma * (next_next_rewards + gamma * mean_targ*(1-dones)))
+        var_targ = ((gamma*gamma*gamma)**2)*var_targ
+
+        #print("mean_targ shape:", mean_targ.shape)  # should still be (batch_size, 1)
+        #print("var_targ shape:", var_targ.shape)    # should still be (batch_size, 1)
+
+        # now compute the critic distribution on the current state
+        Q_expected = self.critic_local(states, actions)
+        mean = Q_expected[:, 0].view(-1,1)
+        var = torch.maximum(0.1*torch.ones_like(Q_expected[:,1].view(-1,1)), Q_expected[:, 1].view(-1,1))
+
+        #dud = Q_targets[2]   # sanity check this line should throw an error
+        #print("mean shape:", mean.shape)  # should be (batch_size, 1)
+        #print("var shape:", var.shape)    # should be (batch_size, 1)
+
+        # now we draw many random samples from the target distribution for each experience tuple
+        n_samples = 1000
+        z_targs = (var_targ)*torch.randn(BATCH_SIZE, n_samples).to(device) + mean_targ 
+        #print("z_targs shape:", z_targs.shape)    # should be (batch_size, 10)
+        
+        # now we compute the KL-divergence between the target and critic distributions
+        exp = -(z_targs - mean)**2 / (2*var**2)                            # (batch_size, n_samples)
+        #print("var:", var)
+        #print("min exp:", torch.min(exp))
+        #print("max exp:", torch.max(exp))
+        p = torch.exp(exp) / torch.sqrt(2*torch.pi*var**2)   # (batch_size, n_samples)
+        #print("min sampled probs:", torch.min(p))
+        #print("max sampled probs:", torch.max(p))
+        log_p = torch.sum(torch.log(p), axis=-1) / n_samples            # (batch_size, 1)
+        #print("min log(p)", torch.min(log_p))
+        #print("max log(p)", torch.max(log_p))
+        
+        
+        
+        critic_loss = -log_p                         # (batch_size, 1)  -- add back importance sampling
+        #print("shape of pre-scalar critic loss:", critic_loss.shape)
+        critic_loss = torch.sum(critic_loss) / BATCH_SIZE               # scalar
+        #print("critic loss:", critic_loss)
+        #print("\n\n")
+
+
+        #Q_targets = rewards + gamma * ( next_rewards + gamma * (next_next_rewards + gamma * Q_target_next_next*(1-dones)))
+        #Q_targets = importance_sampling * Q_targets
         # Compute critic loss
-        Q_expected = importance_sampling * self.critic_local(states, actions)
+        #Q_expected = importance_sampling * self.critic_local(states, actions)
         #print("shape of Q_expected:", Q_expected.shape)  # should be (1024,)
         #print("shape of Q_targets:", Q_targets.shape)    # should be (1024,)
-        critic_loss = F.mse_loss(Q_expected, Q_targets)
+        #critic_loss = F.mse_loss(Q_expected, Q_targets)
         #print("shape of critic loss:", critic_loss.shape)
         # Minimize the loss
         self.critic_optimizer.zero_grad()
@@ -194,13 +244,11 @@ class Agent():
         torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
-        
-
 
         # ---------------------------- update actor ---------------------------- #
         # Compute actor loss
         actions_pred = self.actor_local(states)
-        actor_loss = -self.critic_local(states, actions_pred).mean()
+        actor_loss = -self.critic_local(states, actions_pred)[:,0].mean()  # expected value over all replay tuples
         # Minimize the loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -210,8 +258,8 @@ class Agent():
         # --------------------- update replay priorities  --------------------- #
         #print("Q_targets", Q_targets.shape)
         #print("Q_expected", Q_expected.shape)
-        td_errors = torch.abs(Q_targets.detach() - Q_expected.detach())
-        self.memory.update_priorities(td_errors)
+        #td_errors = torch.abs(mean.detach() - mean_targ.detach())  # (batch_size, 1)
+        #self.memory.update_priorities(td_errors)
 
         # ----------------------- update target networks ----------------------- #
         self.soft_update(self.critic_local, self.critic_target, TAU)
@@ -229,28 +277,6 @@ class Agent():
         """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
-
-class OUNoise:
-    """Ornstein-Uhlenbeck process."""
-
-    def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.2):
-        """Initialize parameters and noise process."""
-        self.mu = mu * np.ones(size)
-        self.theta = theta
-        self.sigma = sigma
-        self.seed = random.seed(seed)
-        self.reset()
-
-    def reset(self):
-        """Reset the internal state (= noise) to mean (mu)."""
-        self.state = copy.copy(self.mu)
-
-    def sample(self):
-        """Update internal state and return it as a noise sample."""
-        x = self.state
-        dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for i in range(len(x))])
-        self.state = x + dx
-        return self.state
 
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
@@ -331,7 +357,7 @@ class ReplayBuffer:
         # convert priorities to probabilities
         probabilities = self.priorities[:self.buffer_len, 0].cpu().numpy()
         probabilities += 0.05*np.random.rand(self.buffer_len)
-        probabilities = probabilities**0.5 / np.sum(probabilities**0.5)
+        probabilities = probabilities**0.0 / np.sum(probabilities**0.0)
         self.batch_ixs = np.random.choice(self.buffer_len, size=self.batch_size, p=probabilities)
 
         states = self.states[self.batch_ixs]
