@@ -33,3 +33,6 @@ First download the Unity environment using the instructions provided by Udacity:
 4. Run cells 1,2,3, and 4 in the D4PG notebook to start training an agent from scratch. The final cell will visualize the performance of your trained agent(s).
 5. You can also load a pretrained agent by running cells 1, 2, and 5
 6. You can visualize the performance of your trained agent(s) by running cell 6.
+
+## Additional Info
+The code for controling the D4PG agent can be found in d4pg_agent.py. The code for creating the actor-critic models can be found in model.py. D4PG.ipynb contains the code to train an agent using the D4PG algorithm to solve the environment. The weights for a fully trained agent (target and local networks) are saved as ddpg_actor_local_199, ddpg_actor_target_199, ddpg_critic_local_199, ddpg_critic_target_199.
