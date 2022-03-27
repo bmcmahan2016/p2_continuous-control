@@ -187,65 +187,33 @@ class Agent():
         mean_targ = Q_target_next_next[:, 0].view(-1,1)           # (batch_size, 1)
         var_targ = Q_target_next_next[:, 1].view(-1,1)            # (batch_size, 1)
         var_targ = torch.maximum(0.25*torch.ones_like(var_targ), var_targ)
-        #print("mean_targ shape:", mean_targ.shape)  # should still be (batch_size, 1)
-        #print("var_targ shape:", var_targ.shape)    # should still be (batch_size, 1)
         
         # Compute mean of target distribution
         mean_targ = rewards + gamma * ( next_rewards + gamma * (next_next_rewards + gamma * mean_targ*(1-dones)))
         var_targ = ((gamma*gamma*gamma)**2)*var_targ
-
-        #print("mean_targ shape:", mean_targ.shape)  # should still be (batch_size, 1)
-        #print("var_targ shape:", var_targ.shape)    # should still be (batch_size, 1)
 
         # now compute the critic distribution on the current state
         Q_expected = self.critic_local(states, actions)
         mean = Q_expected[:, 0].view(-1,1)
         var = torch.maximum(0.25*torch.ones_like(Q_expected[:,1].view(-1,1)), Q_expected[:, 1].view(-1,1))
 
-        #dud = Q_targets[2]   # sanity check this line should throw an error
-        #print("mean shape:", mean.shape)  # should be (batch_size, 1)
-        #print("var shape:", var.shape)    # should be (batch_size, 1)
-
         # now we draw many random samples from the target distribution for each experience tuple
         n_samples = 1000
         z_targs = (var_targ)*torch.randn(BATCH_SIZE, n_samples).to(device) + mean_targ 
-        #print("z_targs shape:", z_targs.shape)    # should be (batch_size, 10)
         
         # now we compute the KL-divergence between the target and critic distributions
         exp = -(z_targs - mean)**2 / (2*var**2)                            # (batch_size, n_samples)
-        #print("var:", var)
-        #print("min exp:", torch.min(exp))
-        #print("max exp:", torch.max(exp))
         p = torch.exp(exp) / torch.sqrt(2*torch.pi*var**2)   # (batch_size, n_samples)
-        #print("min sampled probs:", torch.min(p))
-        #print("max sampled probs:", torch.max(p))
         log_p = torch.sum(torch.log(p), axis=-1) / n_samples            # (batch_size, 1)
-        #print("min log(p)", torch.min(log_p))
-        #print("max log(p)", torch.max(log_p))
-        
-        
         
         critic_loss = -importance_sampling*log_p                         # (batch_size, 1)  -- add back importance sampling
-        #print("shape of pre-scalar critic loss:", critic_loss.shape)
         critic_loss = torch.sum(critic_loss) / BATCH_SIZE               # scalar
-        #print("critic loss:", critic_loss)
-        #print("\n\n")
 
-
-        #Q_targets = rewards + gamma * ( next_rewards + gamma * (next_next_rewards + gamma * Q_target_next_next*(1-dones)))
-        #Q_targets = importance_sampling * Q_targets
-        # Compute critic loss
-        #Q_expected = importance_sampling * self.critic_local(states, actions)
-        #print("shape of Q_expected:", Q_expected.shape)  # should be (1024,)
-        #print("shape of Q_targets:", Q_targets.shape)    # should be (1024,)
-        #critic_loss = F.mse_loss(Q_expected, Q_targets)
-        #print("shape of critic loss:", critic_loss.shape)
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
-
 
         # ---------------------------- update actor ---------------------------- #
         # Compute actor loss
@@ -258,8 +226,6 @@ class Agent():
         self.actor_optimizer.step()
 
         # --------------------- update replay priorities  --------------------- #
-        #print("Q_targets", Q_targets.shape)
-        #print("Q_expected", Q_expected.shape)
         td_errors = torch.abs(mean.detach() - mean_targ.detach())  # (batch_size, 1)
         self.memory.update_priorities(td_errors)
 
