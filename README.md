@@ -16,7 +16,7 @@ Below is a sample animation (provided by Udacity) of 10 agents that have learned
 ![Trained Agent (image provided by Udacity)][image1]
 
 
-Each agent observes a 33-dimensional state vector that contains information about position, rotation, velocity, and angular velocities of the arm. At everytimestep each agent takes a cointinous valued 4-dimensional action that describes the torque to apply to each of the two joints. Each action value should be between -1 and 1. For this project we use an environment with 20 agents. This environment is considered solved when the average score over 100 episodes exceeds +30 over all 20 agents. 
+Each agent observes a 33-dimensional state vector that contains information about position, rotation, velocity, and angular velocities of the arm. At every timestep each agent takes a cointinous valued 4-dimensional action that describes the torque to apply to each of the two joints. Each action value should be between -1 and 1. For this project we use an environment with 20 agents. This environment is considered solved when the average score over 100 episodes exceeds +30 over all 20 agents. 
 
 
 ## How to run the code
